@@ -6,8 +6,16 @@
 
 set -e
 
+# Se positionner automatiquement dans le dossier du projet (pishutter)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+if [ ! -f "package.json" ] && [ -d "$HOME/pishutter" ]; then
+  cd "$HOME/pishutter"
+fi
+
 echo "=========================================================="
 echo "  Installation de PiShutter Freebox sur Raspberry Pi 3   "
+echo "  Dossier de travail : $(pwd)"
 echo "=========================================================="
 
 # 1. Mise à jour des paquets
@@ -43,7 +51,7 @@ fi
 
 # 3. Installation des dépendances du projet PiShutter
 echo "[3/6] Installation des modules npm et compilation..."
-npm install
+npm install --legacy-peer-deps
 npm run build
 
 # 4. Configuration du service systemd pour démarrage automatique au boot

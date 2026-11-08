@@ -13,7 +13,7 @@ git pull
 
 # 2. Installation d'éventuelles nouvelles dépendances et build
 echo "[2/3] Compilation de l'interface..."
-npm install
+npm install --legacy-peer-deps
 npm run build
 
 # 3. Redémarrage propre du service d'arrière-plan
