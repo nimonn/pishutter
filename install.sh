@@ -131,6 +131,23 @@ if [ ! -d "$HOME/fbcp-ili9341" ]; then
   make -j$(nproc)
   sudo cp fbcp-ili9341 /usr/local/bin/
 
+  # Désactiver vc4-kms-v3d et configurer la résolution HDMI 480x320 pour fbcp
+  CONFIG_TXT="/boot/firmware/config.txt"
+  [ ! -f "$CONFIG_TXT" ] && CONFIG_TXT="/boot/config.txt"
+  if [ -f "$CONFIG_TXT" ]; then
+    sudo sed -i 's/^dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d/' "$CONFIG_TXT"
+    if ! grep -q "hdmi_cvt=480 320" "$CONFIG_TXT"; then
+      sudo bash -c "cat <<EOF >> $CONFIG_TXT
+
+# Configuration écran tactile KeDei 480x320
+hdmi_force_hotplug=1
+hdmi_group=2
+hdmi_mode=87
+hdmi_cvt=480 320 60 6 0 0 0
+EOF"
+    fi
+  fi
+
   # Service de démarrage automatique pour l'écran
   sudo bash -c 'cat <<EOF > /etc/systemd/system/fbcp.service
 [Unit]
