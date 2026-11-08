@@ -32,20 +32,23 @@ export const PiGuideModal: React.FC<PiGuideModalProps> = ({ onClose }) => {
    - Nom d'hôte (Hostname) : "pishutter"
 6. Cliquez sur "Écrire". Une fois fini, insérez la carte SD dans le Pi 3 !`,
 
-    kedei: `# --- ÉTAPE 2 : PILOTE ECRAN KEDEI 3.5 v6.3 ---
-# Connectez-vous en SSH depuis votre PC :
-ssh pi@pishutter.local
-# (ou avec l'IP de votre Freebox affichée sur mafreebox.freebox.fr)
+    kedei: `# --- ÉTAPE 2 : PILOTE MODERNE ET SECURISE KEDEI v6.3 (fbcp-ili9341) ---
+# fbcp-ili9341 est le pilote recommandé pour KeDei v6.3 car il s'exécute dans
+# l'espace utilisateur SANS écraser le noyau Linux, préservant 100% du réseau Wi-Fi.
 
-# Cloner le dépôt contenant les binaires du pilote KeDei version 6.3 :
+# 1. Installer les dépendances de compilation :
+sudo apt update && sudo apt install -y cmake git libraspberrypi-dev
+
+# 2. Cloner fbcp-ili9341 et compiler avec le flag KeDei v6.3 MPI3501 :
 cd ~
-git clone https://github.com/cedricve/kedei-v6_3.git
-cd kedei-v6_3
+git clone https://github.com/juj/fbcp-ili9341.git
+cd fbcp-ili9341
+mkdir -p build && cd build
+cmake -DKEDEI_V63_MPI3501=ON -DSPI_BUS_CLOCK_DIVISOR=40 ..
+make -j$(nproc)
 
-# Lancer le script d'installation du pilote KeDei v6.3 :
-sudo ./LCD_show_v6_3
-
-# Le Raspberry Pi 3 redémarre automatiquement. L'affichage s'allume sur le 3.5" !`,
+# 3. Tester l'écran immédiatement (l'image HDMI se clone sur le 3.5") :
+sudo ./fbcp-ili9341`,
 
     install: `# --- ÉTAPE 3 : INSTALLATION DE PISHUTTER VIA GITHUB ---
 # Reconnectez-vous en SSH après redémarrage :

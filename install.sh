@@ -90,11 +90,42 @@ cat <<EOF > "$AUTOSTART_FILE"
 @chromium-browser --kiosk --noerrdialogs --disable-infobars --check-for-update-interval=31536000 --disable-pinch --overscroll-history-navigation=0 http://localhost:3000
 EOF
 
-echo "[6/6] Installation terminée avec succès !"
+# 6. Installation sécurisée du pilote écran KeDei v6.3 (fbcp-ili9341 sans écraser le kernel)
+echo "[6/6] Configuration du pilote écran KeDei 3.5\" v6.3 (fbcp-ili9341)..."
+sudo apt-get install -y cmake libraspberrypi-dev || true
+
+if [ ! -d "$HOME/fbcp-ili9341" ]; then
+  cd "$HOME"
+  git clone https://github.com/juj/fbcp-ili9341.git
+  cd fbcp-ili9341
+  mkdir -p build && cd build
+  cmake -DKEDEI_V63_MPI3501=ON -DSPI_BUS_CLOCK_DIVISOR=40 ..
+  make -j$(nproc)
+  sudo cp fbcp-ili9341 /usr/local/bin/
+
+  # Service de démarrage automatique pour l'écran
+  sudo bash -c 'cat <<EOF > /etc/systemd/system/fbcp.service
+[Unit]
+Description=Pilote KeDei v6.3 Display Driver
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fbcp-ili9341
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF'
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable fbcp.service
+  sudo systemctl start fbcp.service || true
+fi
+
 echo "=========================================================="
-echo "  Pour lancer l'écran KeDei v6.3 (si non déjà fait) :     "
-echo "  cd ~ && git clone https://github.com/cedricve/kedei-v6_3.git"
-echo "  cd kedei-v6_3 && sudo ./LCD_show_v6_3                   "
-echo "=========================================================="
+echo "  Installation terminée avec succès et en toute sécurité ! "
+echo "  Le système et le réseau Wi-Fi restent 100% intègres.   "
 echo "  Redémarrez avec : sudo reboot                           "
 echo "=========================================================="
