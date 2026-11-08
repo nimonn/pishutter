@@ -11,10 +11,9 @@ echo "=== Mise à jour de PiShutter Freebox ==="
 echo "[1/3] Récupération des modifications Git..."
 git pull
 
-# 2. Installation d'éventuelles nouvelles dépendances et build
-echo "[2/3] Compilation de l'interface..."
-npm install --legacy-peer-deps
-npm run build
+# 2. Installation de nouvelles dépendances légères de production
+echo "[2/3] Vérification des modules de production..."
+npm install --omit=dev --legacy-peer-deps || true
 
 # 3. Redémarrage propre du service d'arrière-plan
 echo "[3/3] Redémarrage du service PiShutter..."

@@ -32,10 +32,18 @@ if command -v raspi-config &> /dev/null; then
   sudo raspi-config nonint do_wayland W1 2>/dev/null || true
 fi
 
-# Installation de Node.js & npm si non présents (paquets officiels Debian armhf)
-if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
-  echo "Installation de Node.js et npm pour architecture armhf 32-bit..."
-  sudo apt-get install -y nodejs npm
+# 3. Vérification de la version de Node.js (Vite & Tailwind v4 requièrent Node.js >= 20)
+NODE_MAJOR=0
+if command -v node &> /dev/null; then
+  NODE_MAJOR=$(node -v | cut -d'.' -f1 | tr -d 'v')
+fi
+
+if [ "$NODE_MAJOR" -lt 20 ]; then
+  echo "Mise à niveau vers Node.js v20 LTS officiel pour Raspberry Pi (ARMv7l 32-bit)..."
+  NODE_TAR="node-v20.18.0-linux-armv7l.tar.xz"
+  curl -fsSL "https://nodejs.org/dist/v20.18.0/${NODE_TAR}" -o "/tmp/${NODE_TAR}"
+  sudo tar -xJf "/tmp/${NODE_TAR}" --strip-components=1 -C /usr/local
+  rm -f "/tmp/${NODE_TAR}"
 fi
 
 echo "Node.js version: $(node -v)"
@@ -50,9 +58,14 @@ if [ ! -f "package.json" ]; then
 fi
 
 # 3. Installation des dépendances du projet PiShutter
-echo "[3/6] Installation des modules npm et compilation..."
-npm install --legacy-peer-deps
-npm run build
+echo "[3/6] Installation des modules de production..."
+if [ -d "dist" ] && [ -f "server.js" ]; then
+  echo "Le projet contient déjà l'interface compilée (dossier dist/ et server.js prêts)."
+  npm install --omit=dev --legacy-peer-deps || npm install --legacy-peer-deps
+else
+  npm install --legacy-peer-deps
+  npm run build || true
+fi
 
 # 4. Configuration du service systemd pour démarrage automatique au boot
 echo "[4/6] Configuration du service systemd (pishutter.service)..."
