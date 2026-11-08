@@ -1,0 +1,6 @@
+{
+  "name": "PiShutter Freebox - Écran Tactile 3.5 KeDei",
+  "description": "Interface tactile 480x320 optimisée pour Raspberry Pi 3 et écran KeDei SPI TFTLCD v6.3 (XPT2046) pour piloter les volets roulants Loratap Freebox.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
