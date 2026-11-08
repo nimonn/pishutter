@@ -24,15 +24,22 @@ if command -v raspi-config &> /dev/null; then
   sudo raspi-config nonint do_wayland W1 2>/dev/null || true
 fi
 
-# Installation de Node.js si non présent
-if ! command -v node &> /dev/null; then
-  echo "Installation de Node.js v20 LTS..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-  sudo apt-get install -y nodejs
+# Installation de Node.js & npm si non présents (paquets officiels Debian armhf)
+if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
+  echo "Installation de Node.js et npm pour architecture armhf 32-bit..."
+  sudo apt-get install -y nodejs npm
 fi
 
 echo "Node.js version: $(node -v)"
 echo "NPM version: $(npm -v)"
+
+# S'assurer d'être dans le dossier contenant package.json
+if [ ! -f "package.json" ]; then
+  if [ -d "$HOME/pishutter" ] && [ -f "$HOME/pishutter/package.json" ]; then
+    echo "Navigation vers $HOME/pishutter..."
+    cd "$HOME/pishutter"
+  fi
+fi
 
 # 3. Installation des dépendances du projet PiShutter
 echo "[3/6] Installation des modules npm et compilation..."

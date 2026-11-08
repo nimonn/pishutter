@@ -50,24 +50,21 @@ make -j$(nproc)
 # 3. Tester l'écran immédiatement (l'image HDMI se clone sur le 3.5") :
 sudo ./fbcp-ili9341`,
 
-    install: `# --- ÉTAPE 3 : INSTALLATION DE PISHUTTER VIA GITHUB ---
-# Reconnectez-vous en SSH après redémarrage :
-ssh pi@pishutter.local
-
-# Cloner votre dépôt GitHub PiShutter :
+    install: `# --- ÉTAPE 3 : INSTALLATION DE PISHUTTER ---
+# Cloner le dépôt ou transférer les fichiers sur le Pi :
 cd ~
 git clone https://github.com/nimonn/pishutter.git
 cd pishutter
 
-# Rendre le script d'installation exécutable et le lancer :
+# Rendre exécutable et lancer le script d'installation :
 chmod +x install.sh update.sh
 ./install.sh
 
 # Ce script automatique :
-# - Installe Node.js v20 LTS et Git
-# - Installe les dépendances npm et compile l'applet
-# - Configure le service systemd (démarrage en arrière-plan)
-# - Configure Chromium en mode Kiosk plein écran (480x320) sans curseur !`,
+# - Installe Node.js et npm optimisés pour Raspberry Pi armhf 32-bit
+# - Configure l'affichage sur X11 (Openbox)
+# - Compile l'application PiShutter et configure le service systemd
+# - Configure le mode Kiosk plein écran et le pilote KeDei v6.3 !`,
 
     update: `# --- ÉTAPE 4 : METTRE A JOUR EN 1 COMMANDE ---
 # Quand vous faites une modification sur GitHub, sur votre Pi lancez juste :
