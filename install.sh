@@ -24,11 +24,40 @@ sudo apt-get update -y
 
 # 2. Installation des dépendances système & Vérification X11
 echo "[2/6] Installation des dépendances système..."
-sudo apt-get install -y curl git unclutter xinput-calibrator
+sudo apt-get install -y curl git unclutter xinput-calibrator xinit xorg chromium-browser xserver-xorg-legacy xserver-xorg-video-fbdev
 
-# Sur Debian Bookworm, basculer Wayland vers X11 (Openbox) nécessaire pour l'écran KeDei
+# Autoriser Xorg à s'exécuter avec les privilèges console (résout Permission denied sur /dev/tty*)
+sudo chmod u+s /usr/lib/xorg/Xorg 2>/dev/null || true
+sudo chmod u+s /usr/bin/Xorg 2>/dev/null || true
+
+# Configurer le pilote d'affichage fbdev pour le framebuffer BCM2835 (/dev/fb0)
+sudo mkdir -p /etc/X11/xorg.conf.d
+sudo bash -c 'cat <<EOF > /etc/X11/xorg.conf.d/99-fbdev.conf
+Section "Device"
+    Identifier "RaspberryPi-FB"
+    Driver "fbdev"
+    Option "fbdev" "/dev/fb0"
+EndSection
+EOF'
+
+# Configuration des permissions X11 et TTY pour permettre le lancement du mode Kiosk
+sudo bash -c 'cat <<EOF > /etc/X11/Xwrapper.config
+allowed_users=anybody
+needs_root_rights=yes
+EOF' 2>/dev/null || true
+
+# Accès aux terminaux virtuels et groupes graphiques
+sudo usermod -aG video,input,tty,render "$CURRENT_USER" 2>/dev/null || true
+sudo chmod 666 /dev/tty0 2>/dev/null || true
+sudo bash -c 'echo "KERNEL==\"tty[0-9]*\", MODE=\"0666\"" > /etc/udev/rules.d/99-tty-permissions.rules' 2>/dev/null || true
+
+# Désactiver lightdm s'il est présent pour éviter les conflits d'affichage et économiser la RAM
+sudo systemctl disable lightdm 2>/dev/null || true
+sudo systemctl stop lightdm 2>/dev/null || true
+
+# Sur Debian Bookworm, basculer Wayland vers X11 si raspi-config est présent
 if command -v raspi-config &> /dev/null; then
-  echo "Configuration du serveur d'affichage sur X11 (Openbox)..."
+  echo "Configuration du serveur d'affichage sur X11..."
   sudo raspi-config nonint do_wayland W1 2>/dev/null || true
 fi
 
@@ -67,7 +96,7 @@ else
   npm run build || true
 fi
 
-# 4. Configuration du service systemd pour démarrage automatique au boot
+# 4. Configuration du service systemd pour démarrage automatique du serveur Node
 echo "[4/6] Configuration du service systemd (pishutter.service)..."
 SERVICE_PATH="/etc/systemd/system/pishutter.service"
 CURRENT_DIR=$(pwd)
@@ -75,7 +104,7 @@ CURRENT_USER=$(whoami)
 
 sudo bash -c "cat <<EOF > $SERVICE_PATH
 [Unit]
-Description=PiShutter Freebox KeDei Service
+Description=PiShutter Freebox Node Backend
 After=network.target
 
 [Service]
@@ -95,49 +124,65 @@ EOF"
 sudo systemctl daemon-reload
 sudo systemctl enable pishutter
 sudo systemctl restart pishutter
-echo "Service pishutter activé et démarré sur http://localhost:3000"
+echo "Service pishutter backend activé et démarré sur http://localhost:3000"
 
-# 5. Configuration de l'autostart Chromium Kiosk (plein écran sans barre)
-echo "[5/6] Configuration de l'affichage Kiosk plein écran..."
-AUTOSTART_DIR="$HOME/.config/lxsession/LXDE-pi"
-mkdir -p "$AUTOSTART_DIR"
-AUTOSTART_FILE="$AUTOSTART_DIR/autostart"
+# 5. Configuration du service Kiosk X11 (lancement automatique plein écran sans bureau lourd)
+echo "[5/6] Configuration de l'affichage Kiosk plein écran (xinit)..."
+chmod +x "$CURRENT_DIR/start-kiosk.sh" 2>/dev/null || true
+KIOSK_SERVICE_PATH="/etc/systemd/system/pishutter-kiosk.service"
 
-# Sauvegarde si existant
-if [ -f "$AUTOSTART_FILE" ]; then
-  cp "$AUTOSTART_FILE" "$AUTOSTART_FILE.backup"
-fi
+sudo bash -c "cat <<EOF > $KIOSK_SERVICE_PATH
+[Unit]
+Description=PiShutter Kiosk Touch Display
+After=network.target pishutter.service
+Wants=pishutter.service
 
-cat <<EOF > "$AUTOSTART_FILE"
-@lxpanel --profile LXDE-pi
-@pcmanfm --desktop --profile LXDE-pi
-@xset s off
-@xset -dpms
-@xset s noblank
-@unclutter -idle 0.5 -root
-@chromium-browser --kiosk --noerrdialogs --disable-infobars --check-for-update-interval=31536000 --disable-pinch --overscroll-history-navigation=0 http://localhost:3000
-EOF
+[Service]
+User=$CURRENT_USER
+Group=$CURRENT_USER
+SupplementaryGroups=video input tty render
+TTYPath=/dev/tty7
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+PAMName=login
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/xinit $CURRENT_DIR/start-kiosk.sh -- :0 vt7 -nocursor
+Restart=always
+RestartSec=3
 
-# 6. Installation sécurisée du pilote écran KeDei v6.3 (fbcp-ili9341 sans écraser le kernel)
+[Install]
+WantedBy=multi-user.target
+EOF"
+
+sudo systemctl daemon-reload
+sudo systemctl enable pishutter-kiosk.service
+sudo systemctl restart pishutter-kiosk.service || true
+
+# 6. Installation et compilation du pilote KeDei v6.3 (fbcp-ili9341 sans écraser le kernel)
 echo "[6/6] Configuration du pilote écran KeDei 3.5\" v6.3 (fbcp-ili9341)..."
 sudo apt-get install -y cmake libraspberrypi-dev || true
 
 if [ ! -d "$HOME/fbcp-ili9341" ]; then
   cd "$HOME"
   git clone https://github.com/juj/fbcp-ili9341.git
-  cd fbcp-ili9341
-  mkdir -p build && cd build
-  cmake -DKEDEI_V63_MPI3501=ON -DSPI_BUS_CLOCK_DIVISOR=40 ..
-  make -j$(nproc)
-  sudo cp fbcp-ili9341 /usr/local/bin/
+fi
 
-  # Désactiver vc4-kms-v3d et configurer la résolution HDMI 480x320 pour fbcp
-  CONFIG_TXT="/boot/firmware/config.txt"
-  [ ! -f "$CONFIG_TXT" ] && CONFIG_TXT="/boot/config.txt"
-  if [ -f "$CONFIG_TXT" ]; then
-    sudo sed -i 's/^dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d/' "$CONFIG_TXT"
-    if ! grep -q "hdmi_cvt=480 320" "$CONFIG_TXT"; then
-      sudo bash -c "cat <<EOF >> $CONFIG_TXT
+cd "$HOME/fbcp-ili9341"
+mkdir -p build && cd build
+# STATISTICS=0 supprime l'incrustation CPU/RAM/FPS en haut de l'écran
+cmake -DKEDEI_V63_MPI3501=ON -DSPI_BUS_CLOCK_DIVISOR=40 -DSTATISTICS=0 ..
+make -j$(nproc)
+sudo systemctl stop fbcp.service 2>/dev/null || true
+sudo cp -f fbcp-ili9341 /usr/local/bin/
+
+# Désactiver vc4-kms-v3d et configurer la résolution HDMI 480x320 pour fbcp
+CONFIG_TXT="/boot/firmware/config.txt"
+[ ! -f "$CONFIG_TXT" ] && CONFIG_TXT="/boot/config.txt"
+if [ -f "$CONFIG_TXT" ]; then
+  sudo sed -i 's/^dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d/' "$CONFIG_TXT"
+  if ! grep -q "hdmi_cvt=480 320" "$CONFIG_TXT"; then
+    sudo bash -c "cat <<EOF >> $CONFIG_TXT
 
 # Configuration écran tactile KeDei 480x320
 hdmi_force_hotplug=1
@@ -145,11 +190,11 @@ hdmi_group=2
 hdmi_mode=87
 hdmi_cvt=480 320 60 6 0 0 0
 EOF"
-    fi
   fi
+fi
 
-  # Service de démarrage automatique pour l'écran
-  sudo bash -c 'cat <<EOF > /etc/systemd/system/fbcp.service
+# Service de démarrage automatique pour l'écran
+sudo bash -c 'cat <<EOF > /etc/systemd/system/fbcp.service
 [Unit]
 Description=Pilote KeDei v6.3 Display Driver
 After=network.target
@@ -158,19 +203,20 @@ After=network.target
 Type=simple
 ExecStart=/usr/local/bin/fbcp-ili9341
 Restart=always
-RestartSec=3
+RestartSec=2
+TimeoutStopSec=2
+KillSignal=SIGKILL
 
 [Install]
 WantedBy=multi-user.target
 EOF'
 
-  sudo systemctl daemon-reload
-  sudo systemctl enable fbcp.service
-  sudo systemctl start fbcp.service || true
-fi
+sudo systemctl daemon-reload
+sudo systemctl enable fbcp.service
+sudo systemctl restart fbcp.service || true
 
 echo "=========================================================="
 echo "  Installation terminée avec succès et en toute sécurité ! "
 echo "  Le système et le réseau Wi-Fi restent 100% intègres.   "
-echo "  Redémarrez avec : sudo reboot                           "
+echo "  L'interface tactile PiShutter démarre automatiquement. "
 echo "=========================================================="
