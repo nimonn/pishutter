@@ -76,7 +76,9 @@ const INITIAL_SHUTTERS: ShutterDevice[] = [
 export default function App() {
   const [shutters, setShutters] = useState<ShutterDevice[]>(INITIAL_SHUTTERS);
   const [activeDeviceIndex, setActiveDeviceIndex] = useState<number>(0);
-  const [isKioskOnly, setIsKioskOnly] = useState<boolean>(false);
+  const [isKioskOnly, setIsKioskOnly] = useState<boolean>(
+    () => new URLSearchParams(window.location.search).get('kiosk') === '1'
+  );
   const [currentTime, setCurrentTime] = useState<string>('');
 
   // Modals
