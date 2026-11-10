@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { ShutterDevice, ShutterChannel, FreeboxStatus, PiSystemInfo } from './types/shutter';
 import { ShutterCard } from './components/ShutterCard';
-import { KeDeiFrame } from './components/KeDeiFrame';
 import { Screensaver } from './components/Screensaver';
 import { QuickPresets } from './components/QuickPresets';
 import { FreeboxSetupModal } from './components/FreeboxSetupModal';
@@ -258,28 +257,24 @@ export default function App() {
   const currentDevice = shutters[activeDeviceIndex] || shutters[0];
 
   return (
-    <KeDeiFrame
-      isKioskOnly={isKioskOnly}
-      onToggleKioskOnly={() => setIsKioskOnly(!isKioskOnly)}
-      piInfo={piInfo}
+    <div
+      onPointerDown={handleUserActivity}
+      className="min-h-screen w-full bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-2 sm:p-4 select-none touch-manipulation font-sans"
     >
-      {/* 480x320 Native Resolution Screen Viewport */}
-      <div
-        onPointerDown={handleUserActivity}
-        className="relative w-[480px] h-[320px] bg-slate-950 text-slate-100 flex flex-col justify-between p-2 select-none overflow-hidden touch-manipulation font-sans"
-      >
-        {/* TOP BAR (Height: ~30px) */}
-        <header className="flex items-center justify-between border-b border-slate-800 pb-1 shrink-0">
+      {/* Responsive Web Container (PC & Smartphone) */}
+      <div className="relative w-full max-w-3xl min-h-[calc(100vh-1rem)] sm:min-h-[600px] bg-slate-950 sm:bg-slate-900/40 sm:border sm:border-slate-800/80 sm:rounded-2xl sm:shadow-2xl text-slate-100 flex flex-col justify-between p-2 sm:p-4 overflow-hidden">
+        {/* TOP BAR */}
+        <header className="flex items-center justify-between border-b border-slate-800 pb-2 shrink-0">
           {/* Left: Brand / System Clock */}
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 font-mono text-xs font-bold text-emerald-400">
-              <Clock className="w-3.5 h-3.5" />
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-1.5 font-mono text-xs sm:text-sm font-bold text-emerald-400">
+              <Clock className="w-4 h-4" />
               <span className="tabular-nums tracking-tight">{currentTime || '12:00'}</span>
             </div>
             <span className="text-slate-700">|</span>
-            <div className="flex items-center gap-1 text-[11px] text-slate-300 font-medium">
+            <div className="flex items-center gap-1.5 text-xs sm:text-sm text-slate-300 font-medium">
               <span className="text-slate-100 font-bold">PiShutter</span>
-              <span className="text-[9px] text-slate-400 font-mono">KeDei 3.5</span>
+              <span className="hidden sm:inline text-xs text-slate-400 font-mono">Freebox Home</span>
             </div>
           </div>
 
@@ -463,6 +458,15 @@ export default function App() {
                 body: JSON.stringify({ freeboxHost: host, demoMode: demo }),
               });
             }}
+            onImportDiscovered={(newDevices) => {
+              setShutters(newDevices);
+              setActiveDeviceIndex(0);
+              fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shutters: newDevices }),
+              });
+            }}
             onClose={() => setShowFreeboxModal(false)}
           />
         )}
@@ -486,6 +490,6 @@ export default function App() {
           />
         )}
       </div>
-    </KeDeiFrame>
+    </div>
   );
 }

@@ -9,6 +9,30 @@ export interface ShutterChannel {
   travelTimeSeconds: number; // travel duration in seconds for realistic calibration
   freeboxNodeId?: number;
   freeboxEndpointId?: number;
+  freeboxUpEndpointId?: number;
+  freeboxDownEndpointId?: number;
+  freeboxStopEndpointId?: number;
+}
+
+export interface DiscoveredFreeboxTile {
+  nodeId: number;
+  label: string;
+  type: string;
+  action?: string;
+  endpointId?: number;
+  upEndpointId?: number;
+  downEndpointId?: number;
+  stopEndpointId?: number;
+  positionEndpointId?: number;
+  currentValue?: number;
+  rawEndpoints?: Array<{
+    id: number;
+    name: string;
+    label: string;
+    ui_class?: string;
+    value_type?: string;
+    value?: any;
+  }>;
 }
 
 export interface ShutterDevice {

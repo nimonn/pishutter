@@ -29,6 +29,9 @@ interface ShutterChannel {
   travelTimeSeconds: number; // time to open/close (e.g. 18s)
   freeboxNodeId?: number;
   freeboxEndpointId?: number;
+  freeboxUpEndpointId?: number;
+  freeboxDownEndpointId?: number;
+  freeboxStopEndpointId?: number;
 }
 
 interface ShutterDevice {
@@ -134,6 +137,138 @@ let runtimeConfig = readConfig();
 let currentSessionToken: string | null = null;
 let sessionExpiresAt = 0;
 
+function normalizeHost(host: string): string {
+  return (host || 'http://mafreebox.freebox.fr').replace(/\/+$/, '');
+}
+
+async function getFreeboxSessionToken(forceRefresh = false): Promise<string> {
+  if (!runtimeConfig.freeboxAppToken || runtimeConfig.freeboxAppToken.startsWith('simulated_')) {
+    throw new Error('Aucun jeton Freebox valide enregistré. Veuillez associer la Freebox.');
+  }
+
+  if (!forceRefresh && currentSessionToken && Date.now() < sessionExpiresAt) {
+    return currentSessionToken;
+  }
+
+  const host = normalizeHost(runtimeConfig.freeboxHost);
+  const loginRes = await fetch(`${host}/api/v8/login/`);
+  const loginData = await loginRes.json();
+
+  if (!loginData.success || !loginData.result?.challenge) {
+    throw new Error(loginData.msg || 'Impossible de récupérer le challenge Freebox.');
+  }
+
+  const challenge: string = loginData.result.challenge;
+  const password = crypto
+    .createHmac('sha1', runtimeConfig.freeboxAppToken)
+    .update(challenge)
+    .digest('hex');
+
+  const sessionRes = await fetch(`${host}/api/v8/login/session/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      app_id: runtimeConfig.freeboxAppId,
+      app_version: '1.0.0',
+      password,
+    }),
+  });
+
+  const sessionData = await sessionRes.json();
+  if (!sessionData.success || !sessionData.result?.session_token) {
+    throw new Error(sessionData.msg || `Échec ouverture session Freebox (${sessionData.error_code || 'erreur'})`);
+  }
+
+  currentSessionToken = sessionData.result.session_token;
+  sessionExpiresAt = Date.now() + 25 * 60 * 1000;
+  return currentSessionToken!;
+}
+
+async function freeboxFetch(apiPath: string, options: RequestInit = {}): Promise<any> {
+  const host = normalizeHost(runtimeConfig.freeboxHost);
+  let token = await getFreeboxSessionToken(false);
+
+  let res = await fetch(`${host}${apiPath}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+      'X-Fbx-App-Auth': token,
+    },
+  });
+
+  let data = await res.json();
+  if (!data.success && (data.error_code === 'auth_required' || data.error_code === 'invalid_session')) {
+    token = await getFreeboxSessionToken(true);
+    res = await fetch(`${host}${apiPath}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+        'X-Fbx-App-Auth': token,
+      },
+    });
+    data = await res.json();
+  }
+
+  return data;
+}
+
+async function sendFreeboxShutterCommand(
+  channel: ShutterChannel,
+  action: 'up' | 'down' | 'stop' | 'set_position',
+  targetPosition?: number
+): Promise<void> {
+  if (runtimeConfig.demoMode || !runtimeConfig.freeboxAppToken || !channel.freeboxNodeId) {
+    return;
+  }
+
+  const nodeId = channel.freeboxNodeId;
+  let endpointId: number | undefined;
+  let payload: any = { value: null };
+
+  if (action === 'up') {
+    if (channel.freeboxUpEndpointId) {
+      endpointId = channel.freeboxUpEndpointId;
+      payload = { value: true };
+    } else if (channel.freeboxEndpointId) {
+      endpointId = channel.freeboxEndpointId;
+      payload = { value: 100 };
+    }
+  } else if (action === 'down') {
+    if (channel.freeboxDownEndpointId) {
+      endpointId = channel.freeboxDownEndpointId;
+      payload = { value: true };
+    } else if (channel.freeboxEndpointId) {
+      endpointId = channel.freeboxEndpointId;
+      payload = { value: 0 };
+    }
+  } else if (action === 'stop') {
+    if (channel.freeboxStopEndpointId) {
+      endpointId = channel.freeboxStopEndpointId;
+      payload = { value: true };
+    }
+  } else if (action === 'set_position' && typeof targetPosition === 'number') {
+    if (channel.freeboxEndpointId) {
+      endpointId = channel.freeboxEndpointId;
+      payload = { value: Math.max(0, Math.min(100, Math.round(targetPosition))) };
+    }
+  }
+
+  if (!endpointId) {
+    return;
+  }
+
+  const data = await freeboxFetch(`/api/v8/home/endpoints/${nodeId}/${endpointId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+
+  if (!data.success) {
+    console.error(`Freebox command error on node ${nodeId}/${endpointId}:`, data);
+  }
+}
+
 // API Routes
 app.get('/api/config', (_req: Request, res: Response) => {
   res.json(runtimeConfig);
@@ -180,15 +315,10 @@ app.post('/api/shutters/command', async (req: Request, res: Response) => {
     targetChannel.state = targetPosition > prev ? 'opening' : targetPosition < prev ? 'closing' : 'idle';
   }
 
-  // If real Freebox token is configured and not in demo mode, try sending command to Freebox API
-  if (!runtimeConfig.demoMode && runtimeConfig.freeboxAppToken && targetChannel.freeboxNodeId) {
-    try {
-      // Call Freebox endpoint
-      // PUT /api/v8/home/endpoints/{node_id}/{endpoint_id}
-      console.log(`Forwarding action ${action} to Freebox node ${targetChannel.freeboxNodeId}`);
-    } catch (fbErr) {
-      console.error('Freebox forwarding error:', fbErr);
-    }
+  try {
+    await sendFreeboxShutterCommand(targetChannel, action, targetPosition);
+  } catch (fbErr) {
+    console.error('Freebox forwarding error:', fbErr);
   }
 
   saveConfig(runtimeConfig);
@@ -196,28 +326,107 @@ app.post('/api/shutters/command', async (req: Request, res: Response) => {
 });
 
 // Group commands (All open, All close, Ventilation 50%)
-app.post('/api/shutters/group', (req: Request, res: Response) => {
+app.post('/api/shutters/group', async (req: Request, res: Response) => {
   const { action, targetPosition } = req.body;
+
+  const promises: Promise<void>[] = [];
 
   runtimeConfig.shutters.forEach((device) => {
     device.channels.forEach((channel) => {
       if (action === 'all_open') {
         channel.position = 100;
         channel.state = 'opening';
+        promises.push(sendFreeboxShutterCommand(channel, 'up').catch(() => {}));
       } else if (action === 'all_close') {
         channel.position = 0;
         channel.state = 'closing';
+        promises.push(sendFreeboxShutterCommand(channel, 'down').catch(() => {}));
       } else if (action === 'all_stop') {
         channel.state = 'stopped';
+        promises.push(sendFreeboxShutterCommand(channel, 'stop').catch(() => {}));
       } else if (action === 'all_preset' && typeof targetPosition === 'number') {
         channel.position = targetPosition;
         channel.state = 'idle';
+        promises.push(sendFreeboxShutterCommand(channel, 'set_position', targetPosition).catch(() => {}));
       }
     });
   });
 
+  await Promise.all(promises);
   saveConfig(runtimeConfig);
   res.json({ success: true, shutters: runtimeConfig.shutters });
+});
+
+// Discover paired Freebox Home devices (shutters, switches, Zigbee/IO/RTS nodes)
+app.get('/api/freebox/discover', async (_req: Request, res: Response) => {
+  try {
+    const tilesData = await freeboxFetch('/api/v8/home/tileset/all');
+    if (!tilesData.success) {
+      return res.json({
+        success: false,
+        errorCode: tilesData.error_code,
+        message:
+          tilesData.error_code === 'insufficient_rights'
+            ? "Droits insuffisants : activez la permission 'Gestion de l'alarme et maison' pour PiShutter dans Freebox OS (Paramètres -> Gestion des accès -> Applications)."
+            : tilesData.msg || 'Impossible de lire les équipements Freebox Home.',
+        tiles: [],
+      });
+    }
+
+    const rawTiles: any[] = tilesData.result || [];
+    const discovered = rawTiles.map((tile: any) => {
+      const eps: any[] = tile.data || [];
+      let positionEndpointId: number | undefined;
+      let upEndpointId: number | undefined;
+      let downEndpointId: number | undefined;
+      let stopEndpointId: number | undefined;
+      let currentValue: number | undefined;
+
+      for (const ep of eps) {
+        const name = (ep.name || '').toLowerCase();
+        const uiClass = (ep.ui_class || '').toLowerCase();
+        if (name === 'position' || name === 'position_set' || uiClass === 'position') {
+          positionEndpointId = ep.ep_id;
+          if (typeof ep.value === 'number') currentValue = ep.value;
+        } else if (name === 'up' || name === 'open') {
+          upEndpointId = ep.ep_id;
+        } else if (name === 'down' || name === 'close') {
+          downEndpointId = ep.ep_id;
+        } else if (name === 'stop') {
+          stopEndpointId = ep.ep_id;
+        }
+      }
+
+      return {
+        nodeId: tile.node_id,
+        label: tile.label || `Équipement #${tile.node_id}`,
+        type: tile.type || 'unknown',
+        action: tile.action,
+        endpointId: positionEndpointId,
+        positionEndpointId,
+        upEndpointId,
+        downEndpointId,
+        stopEndpointId,
+        currentValue,
+        rawEndpoints: eps.map((ep: any) => ({
+          id: ep.ep_id,
+          name: ep.name,
+          label: ep.label,
+          ui_class: ep.ui_class,
+          value_type: ep.value_type,
+          value: ep.value,
+        })),
+      };
+    });
+
+    return res.json({ success: true, tiles: discovered });
+  } catch (err: any) {
+    return res.json({
+      success: false,
+      message: err?.message || 'Erreur lors de la découverte des équipements Freebox.',
+      tiles: [],
+    });
+  }
 });
 
 // Freebox OS Discovery & Authorization Handlers
