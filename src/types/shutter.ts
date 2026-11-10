@@ -12,6 +12,19 @@ export interface ShutterChannel {
   freeboxUpEndpointId?: number;
   freeboxDownEndpointId?: number;
   freeboxStopEndpointId?: number;
+  tuyaDeviceId?: string;
+  tuyaLocalKey?: string;
+  tuyaIp?: string;
+  tuyaVersion?: string;
+  tuyaControlDps?: number;
+  tuyaPositionDps?: number;
+}
+
+export interface DiscoveredTuyaDevice {
+  id: string;
+  ip: string;
+  version: string;
+  productKey?: string;
 }
 
 export interface DiscoveredFreeboxTile {

@@ -4,7 +4,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import crypto from "crypto";
+import dgram from "dgram";
 import dotenv from "dotenv";
+import TuyAPI from "tuyapi";
 dotenv.config();
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
@@ -197,6 +199,41 @@ async function sendFreeboxShutterCommand(channel, action, targetPosition) {
     console.error(`Freebox command error on node ${nodeId}/${endpointId}:`, data);
   }
 }
+async function sendTuyaShutterCommand(channel, action, targetPosition) {
+  if (runtimeConfig.demoMode || !channel.tuyaDeviceId || !channel.tuyaLocalKey) {
+    return;
+  }
+  const device = new TuyAPI({
+    id: channel.tuyaDeviceId,
+    key: channel.tuyaLocalKey,
+    ip: channel.tuyaIp || void 0,
+    version: channel.tuyaVersion || "3.3",
+    issueRefreshOnConnect: false
+  });
+  const controlDps = channel.tuyaControlDps ?? 1;
+  const positionDps = channel.tuyaPositionDps ?? 2;
+  try {
+    await device.find({ timeout: 3 });
+    await device.connect();
+    if (action === "up") {
+      await device.set({ dps: controlDps, set: "open" });
+    } else if (action === "down") {
+      await device.set({ dps: controlDps, set: "close" });
+    } else if (action === "stop") {
+      await device.set({ dps: controlDps, set: "stop" });
+    } else if (action === "set_position" && typeof targetPosition === "number") {
+      await device.set({
+        dps: positionDps,
+        set: Math.max(0, Math.min(100, Math.round(targetPosition)))
+      });
+    }
+  } finally {
+    try {
+      await device.disconnect();
+    } catch {
+    }
+  }
+}
 app.get("/api/config", (_req, res) => {
   res.json(runtimeConfig);
 });
@@ -235,8 +272,9 @@ app.post("/api/shutters/command", async (req, res) => {
   }
   try {
     await sendFreeboxShutterCommand(targetChannel, action, targetPosition);
-  } catch (fbErr) {
-    console.error("Freebox forwarding error:", fbErr);
+    await sendTuyaShutterCommand(targetChannel, action, targetPosition);
+  } catch (err) {
+    console.error("Shutter forwarding error:", err);
   }
   saveConfig(runtimeConfig);
   res.json({ success: true, channel: targetChannel });
@@ -251,19 +289,27 @@ app.post("/api/shutters/group", async (req, res) => {
         channel.state = "opening";
         promises.push(sendFreeboxShutterCommand(channel, "up").catch(() => {
         }));
+        promises.push(sendTuyaShutterCommand(channel, "up").catch(() => {
+        }));
       } else if (action === "all_close") {
         channel.position = 0;
         channel.state = "closing";
         promises.push(sendFreeboxShutterCommand(channel, "down").catch(() => {
         }));
+        promises.push(sendTuyaShutterCommand(channel, "down").catch(() => {
+        }));
       } else if (action === "all_stop") {
         channel.state = "stopped";
         promises.push(sendFreeboxShutterCommand(channel, "stop").catch(() => {
+        }));
+        promises.push(sendTuyaShutterCommand(channel, "stop").catch(() => {
         }));
       } else if (action === "all_preset" && typeof targetPosition === "number") {
         channel.position = targetPosition;
         channel.state = "idle";
         promises.push(sendFreeboxShutterCommand(channel, "set_position", targetPosition).catch(() => {
+        }));
+        promises.push(sendTuyaShutterCommand(channel, "set_position", targetPosition).catch(() => {
         }));
       }
     });
@@ -271,6 +317,64 @@ app.post("/api/shutters/group", async (req, res) => {
   await Promise.all(promises);
   saveConfig(runtimeConfig);
   res.json({ success: true, shutters: runtimeConfig.shutters });
+});
+app.get("/api/tuya/scan", async (_req, res) => {
+  const found = /* @__PURE__ */ new Map();
+  const udpKey = crypto.createHash("md5").update("yGAdlopoPVldABfn").digest();
+  const tryParsePacket = (msg, rinfo, encrypted) => {
+    try {
+      let jsonStr = "";
+      if (!encrypted) {
+        const start = msg.indexOf("{");
+        const end = msg.lastIndexOf("}");
+        if (start !== -1 && end !== -1) {
+          jsonStr = msg.subarray(start, end + 1).toString("utf8");
+        }
+      } else if (msg.length > 28) {
+        const payload = msg.subarray(20, msg.length - 8);
+        const decipher = crypto.createDecipheriv("aes-128-ecb", udpKey, null);
+        const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]);
+        jsonStr = decrypted.toString("utf8");
+      }
+      if (!jsonStr) return;
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.gwId) {
+        found.set(parsed.gwId, {
+          id: parsed.gwId,
+          ip: parsed.ip || rinfo.address,
+          version: parsed.version || "3.3",
+          productKey: parsed.productKey
+        });
+      }
+    } catch {
+    }
+  };
+  const s6666 = dgram.createSocket({ type: "udp4", reuseAddr: true });
+  const s6667 = dgram.createSocket({ type: "udp4", reuseAddr: true });
+  s6666.on("error", () => {
+  });
+  s6667.on("error", () => {
+  });
+  s6666.on("message", (msg, rinfo) => tryParsePacket(msg, rinfo, false));
+  s6667.on("message", (msg, rinfo) => tryParsePacket(msg, rinfo, true));
+  try {
+    s6666.bind(6666);
+    s6667.bind(6667);
+  } catch {
+  }
+  await new Promise((resolve) => setTimeout(resolve, 4e3));
+  try {
+    s6666.close();
+  } catch {
+  }
+  try {
+    s6667.close();
+  } catch {
+  }
+  res.json({
+    success: true,
+    devices: Array.from(found.values())
+  });
 });
 app.get("/api/freebox/discover", async (_req, res) => {
   try {

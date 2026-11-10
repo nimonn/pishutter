@@ -4,12 +4,18 @@ import {
   AlertTriangle,
   RefreshCw,
   KeyRound,
-  Server,
+  Wifi,
   Search,
   Download,
-  ShieldAlert,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
-import { DiscoveredFreeboxTile, FreeboxStatus, ShutterDevice } from '../types/shutter';
+import {
+  DiscoveredFreeboxTile,
+  DiscoveredTuyaDevice,
+  FreeboxStatus,
+  ShutterDevice,
+} from '../types/shutter';
 
 interface FreeboxSetupModalProps {
   freeboxStatus: FreeboxStatus;
@@ -29,12 +35,78 @@ export const FreeboxSetupModal: React.FC<FreeboxSetupModalProps> = ({
 }) => {
   const [host, setHost] = useState(freeboxHost);
   const [isDemo, setIsDemo] = useState(demoMode);
+
+  // Tuya / Loratap Wi-Fi LAN scan
+  const [scanningTuya, setScanningTuya] = useState(false);
+  const [tuyaDevices, setTuyaDevices] = useState<DiscoveredTuyaDevice[]>([]);
+  const [tuyaScanDone, setTuyaScanDone] = useState(false);
+
+  // Freebox Home (Delta/Pop) collapsible section
+  const [showFreeboxHome, setShowFreeboxHome] = useState(false);
   const [step, setStep] = useState<'idle' | 'waiting_press' | 'granted' | 'error'>('idle');
   const [loading, setLoading] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [logMessage, setLogMessage] = useState<string>('');
   const [discoveredTiles, setDiscoveredTiles] = useState<DiscoveredFreeboxTile[]>([]);
   const [discoverError, setDiscoverError] = useState<string>('');
+
+  const handleScanTuya = async () => {
+    setScanningTuya(true);
+    setTuyaScanDone(false);
+    try {
+      const res = await fetch('/api/tuya/scan');
+      const data = await res.json();
+      setTuyaDevices(data.devices || []);
+    } catch {
+      setTuyaDevices([]);
+    } finally {
+      setScanningTuya(false);
+      setTuyaScanDone(true);
+    }
+  };
+
+  const handleImportTuyaDevices = () => {
+    if (!onImportDiscovered || tuyaDevices.length === 0) return;
+
+    const imported: ShutterDevice[] = tuyaDevices.map((dev, idx) => ({
+      id: `loratap-${dev.id}`,
+      name: `Interrupteur Loratap ${idx + 1}`,
+      type: 'loratap_double',
+      room: `Zone ${idx + 1} (${dev.ip})`,
+      channels: [
+        {
+          id: `loratap-${dev.id}-ch1`,
+          name: 'Volet Gauche',
+          room: `Zone ${idx + 1}`,
+          position: 100,
+          state: 'idle',
+          travelTimeSeconds: 18,
+          tuyaDeviceId: dev.id,
+          tuyaIp: dev.ip,
+          tuyaVersion: dev.version || '3.3',
+          tuyaControlDps: 1,
+          tuyaPositionDps: 2,
+        },
+        {
+          id: `loratap-${dev.id}-ch2`,
+          name: 'Volet Droit',
+          room: `Zone ${idx + 1}`,
+          position: 100,
+          state: 'idle',
+          travelTimeSeconds: 18,
+          tuyaDeviceId: dev.id,
+          tuyaIp: dev.ip,
+          tuyaVersion: dev.version || '3.3',
+          tuyaControlDps: 101,
+          tuyaPositionDps: 102,
+        },
+      ],
+    }));
+
+    onImportDiscovered(imported);
+    onUpdateSettings(host, false);
+    onClose();
+  };
 
   const handleRequestAuth = async () => {
     setLoading(true);
@@ -102,9 +174,7 @@ export const FreeboxSetupModal: React.FC<FreeboxSetupModalProps> = ({
       if (data.success) {
         setDiscoveredTiles(data.tiles || []);
         if ((data.tiles || []).length === 0) {
-          setDiscoverError(
-            "Aucun équipement domotique trouvé sur la Freebox. Vérifiez qu'ils apparaissent bien dans l'app Freebox Home."
-          );
+          setDiscoverError('Aucun équipement domotique trouvé sur cette Freebox.');
         }
       } else {
         setDiscoverError(data.message || 'Impossible de lister les équipements Freebox.');
@@ -116,7 +186,7 @@ export const FreeboxSetupModal: React.FC<FreeboxSetupModalProps> = ({
     }
   };
 
-  const handleImportAll = () => {
+  const handleImportFreeboxAll = () => {
     if (!onImportDiscovered || discoveredTiles.length === 0) return;
 
     const importedChannels = discoveredTiles.map((tile, idx) => ({
@@ -161,9 +231,9 @@ export const FreeboxSetupModal: React.FC<FreeboxSetupModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <div className="flex items-center gap-2">
-            <Server className="w-5 h-5 text-emerald-400" />
+            <Wifi className="w-5 h-5 text-emerald-400" />
             <span className="text-sm sm:text-base font-bold text-white tracking-tight">
-              Connexion Freebox & Appairage Interrupteurs
+              Appairage Loratap Wi-Fi & Mode Réel
             </span>
           </div>
           <button
@@ -174,166 +244,175 @@ export const FreeboxSetupModal: React.FC<FreeboxSetupModalProps> = ({
           </button>
         </div>
 
-        {/* Host URL & Demo toggle */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Mode toggle */}
+        <div className="flex items-center justify-between bg-slate-950/70 border border-slate-800 rounded-xl p-3">
           <div>
-            <label className="text-xs font-mono text-slate-400 block mb-1">
-              Adresse Freebox :
-            </label>
-            <input
-              type="text"
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500"
-              placeholder="http://mafreebox.freebox.fr"
-            />
+            <div className="text-xs font-bold text-white">Mode de fonctionnement</div>
+            <div className="text-[11px] text-slate-400">
+              Activez le mode réel pour envoyer les ordres aux interrupteurs sur le Wi-Fi.
+            </div>
           </div>
-
-          <div>
-            <label className="text-xs font-mono text-slate-400 block mb-1">
-              Mode Fonctionnement :
-            </label>
-            <button
-              onClick={() => setIsDemo(!isDemo)}
-              className={`w-full py-2 px-3 rounded-lg text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${
-                isDemo
-                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                  : 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-              }`}
-            >
-              {isDemo ? 'Mode Démo (Simulateur)' : 'Mode Réel Freebox'}
-            </button>
-          </div>
+          <button
+            onClick={() => setIsDemo(!isDemo)}
+            className={`py-2 px-3 rounded-lg text-xs font-bold border transition-colors shrink-0 ${
+              isDemo
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                : 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+            }`}
+          >
+            {isDemo ? 'Mode Démo' : 'Mode Réel Actif'}
+          </button>
         </div>
 
-        {/* Step 1: Association Freebox OS */}
-        <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3 space-y-2.5">
+        {/* Loratap Wi-Fi (Tuya Local) Section */}
+        <div className="bg-slate-950/70 border border-emerald-900/50 rounded-xl p-3 space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-200">
-              Étape 1 — Autoriser PiShutter sur la Freebox
+            <span className="text-xs font-bold text-emerald-400">
+              Interrupteurs Loratap Wi-Fi (Tuya / Smart Life)
             </span>
-            <span className="text-[10px] font-mono text-slate-400">API v8 / Home</span>
+            <span className="text-[10px] font-mono text-slate-400">Freebox Révolution</span>
           </div>
 
-          {step === 'idle' && (
-            <div className="flex flex-col gap-2">
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Cliquez pour envoyer la demande d'accès, puis validez avec la{' '}
-                <strong className="text-slate-200">flèche droite</strong> sur l'écran de votre Freebox.
-              </p>
-              <button
-                onClick={handleRequestAuth}
-                disabled={loading}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
-              >
-                <KeyRound className="w-4 h-4" />
-                1. Demander l'accès à la Freebox
-              </button>
-            </div>
-          )}
-
-          {step === 'waiting_press' && (
-            <div className="space-y-2">
-              <div className="p-2.5 bg-amber-950/60 border border-amber-600/40 rounded-lg text-xs text-amber-200 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-                <div>
-                  <strong>Action requise :</strong> Regardez l'écran de votre Freebox et appuyez sur la{' '}
-                  <strong>FLÈCHE DROITE</strong> pour accepter.
-                </div>
-              </div>
-              <button
-                onClick={handleCheckTrack}
-                disabled={loading}
-                className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
-              >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                2. Vérifier la validation
-              </button>
-            </div>
-          )}
-
-          {step === 'granted' && (
-            <div className="p-2.5 bg-emerald-950/60 border border-emerald-600/40 rounded-lg text-xs text-emerald-200 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Freebox associée !</span>
-              </div>
-              <button
-                onClick={() => setStep('idle')}
-                className="text-[11px] text-slate-300 underline hover:text-white"
-              >
-                Réassocier
-              </button>
-            </div>
-          )}
-
-          {logMessage && (
-            <div className="text-[11px] font-mono text-slate-400 break-words">{logMessage}</div>
-          )}
-        </div>
-
-        {/* Step 2: Permission Home & Discovery */}
-        <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-200">
-              Étape 2 — Découvrir vos interrupteurs Freebox Home
-            </span>
-          </div>
-
-          <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg text-[11px] text-slate-300 flex items-start gap-2">
-            <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <div>
-              Dans <strong>Freebox OS</strong> (<code>http://mafreebox.freebox.fr</code> → Paramètres → Gestion des accès → Applications → <em>PiShutter</em>), cochez la permission{' '}
-              <strong className="text-emerald-300">Gestion de l'alarme et maison</strong>.
-            </div>
-          </div>
+          <ol className="text-[11px] text-slate-300 space-y-1.5 list-decimal list-inside leading-relaxed">
+            <li>
+              Dans <strong>Freebox OS</strong> (<code>mafreebox.freebox.fr</code> → Wi-Fi → Config. radio),{' '}
+              <strong>désactivez temporairement le 5 GHz</strong> (ou séparez les noms 2.4G / 5G) le temps d'appairer vos interrupteurs dans l'app <strong>Smart Life</strong> sur votre téléphone.
+            </li>
+            <li>
+              Une fois connectés au Wi-Fi 2.4 GHz, cliquez ci-dessous pour les détecter automatiquement sur le réseau local.
+            </li>
+            <li>
+              Renseignez leur <strong>Local Key</strong> (16 caractères) dans la configuration des volets (icône{' '}
+              <span className="text-slate-100 font-semibold">Réglages</span>).
+            </li>
+          </ol>
 
           <button
-            onClick={handleDiscoverDevices}
-            disabled={discovering}
-            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
+            onClick={handleScanTuya}
+            disabled={scanningTuya}
+            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
           >
-            <Search className={`w-4 h-4 ${discovering ? 'animate-spin' : ''}`} />
-            {discovering ? 'Recherche en cours...' : 'Scanner mes interrupteurs Freebox'}
+            <Search className={`w-4 h-4 ${scanningTuya ? 'animate-spin' : ''}`} />
+            {scanningTuya
+              ? 'Écoute du réseau Wi-Fi (4s)...'
+              : 'Scanner mon réseau Wi-Fi (Loratap / Tuya)'}
           </button>
 
-          {discoverError && (
-            <div className="p-2.5 bg-rose-950/60 border border-rose-700/50 rounded-lg text-xs text-rose-200">
-              {discoverError}
+          {tuyaScanDone && tuyaDevices.length === 0 && (
+            <div className="p-2.5 bg-amber-950/50 border border-amber-700/40 rounded-lg text-[11px] text-amber-200">
+              Aucun interrupteur Tuya/Loratap détecté en diffusion UDP pour l'instant. Assurez-vous qu'ils sont bien connectés au Wi-Fi 2.4 GHz via Smart Life, ou saisissez leur IP / ID manuellement dans les réglages des volets.
             </div>
           )}
 
-          {discoveredTiles.length > 0 && (
-            <div className="space-y-2 pt-1">
+          {tuyaDevices.length > 0 && (
+            <div className="space-y-2">
               <div className="text-xs font-semibold text-emerald-400">
-                {discoveredTiles.length} équipement(s) détecté(s) :
+                {tuyaDevices.length} module(s) Loratap/Tuya détecté(s) :
               </div>
-              <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-                {discoveredTiles.map((t, i) => (
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {tuyaDevices.map((dev) => (
                   <div
-                    key={`${t.nodeId}-${i}`}
-                    className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-2 text-xs"
+                    key={dev.id}
+                    className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs"
                   >
-                    <div>
-                      <div className="font-bold text-white">{t.label}</div>
-                      <div className="text-[10px] font-mono text-slate-400">
-                        Node #{t.nodeId} · Type: {t.type}
-                        {t.positionEndpointId ? ` · Pos EP #${t.positionEndpointId}` : ''}
-                        {t.upEndpointId ? ` · Up EP #${t.upEndpointId}` : ''}
-                      </div>
+                    <div className="font-mono font-bold text-white">ID : {dev.id}</div>
+                    <div className="text-[11px] font-mono text-slate-400">
+                      IP : {dev.ip} · Protocole v{dev.version}
                     </div>
                   </div>
                 ))}
               </div>
               {onImportDiscovered && (
                 <button
-                  onClick={handleImportAll}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2"
+                  onClick={handleImportTuyaDevices}
+                  className="w-full py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2"
                 >
                   <Download className="w-4 h-4" />
-                  Importer ces interrupteurs dans PiShutter
+                  Importer ces modules dans PiShutter
                 </button>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* Collapsible Freebox Home (Delta / Pop only) */}
+        <div className="border border-slate-800 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowFreeboxHome(!showFreeboxHome)}
+            className="w-full px-3 py-2.5 bg-slate-950/50 flex items-center justify-between text-xs font-semibold text-slate-400 hover:text-slate-200"
+          >
+            <span>Option avancée : Freebox Home (Freebox Delta uniquement)</span>
+            {showFreeboxHome ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+
+          {showFreeboxHome && (
+            <div className="p-3 bg-slate-950/30 space-y-3 border-t border-slate-800">
+              <div>
+                <label className="text-[11px] font-mono text-slate-400 block mb-1">
+                  Adresse Freebox :
+                </label>
+                <input
+                  type="text"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-white"
+                />
+              </div>
+
+              {step === 'idle' && (
+                <button
+                  onClick={handleRequestAuth}
+                  disabled={loading}
+                  className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  Demander l'accès Freebox OS
+                </button>
+              )}
+
+              {step === 'waiting_press' && (
+                <div className="space-y-2">
+                  <div className="p-2 bg-amber-950/60 border border-amber-600/40 rounded text-[11px] text-amber-200 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                    <span>Appuyez sur la flèche droite de la Freebox puis vérifiez.</span>
+                  </div>
+                  <button
+                    onClick={handleCheckTrack}
+                    disabled={loading}
+                    className="w-full py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                    Vérifier la validation
+                  </button>
+                </div>
+              )}
+
+              {step === 'granted' && (
+                <div className="space-y-2">
+                  <div className="p-2 bg-emerald-950/60 border border-emerald-600/40 rounded text-[11px] text-emerald-200 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Freebox associée.</span>
+                  </div>
+                  <button
+                    onClick={handleDiscoverDevices}
+                    disabled={discovering}
+                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold"
+                  >
+                    {discovering ? 'Scan...' : 'Scanner Freebox Home'}
+                  </button>
+                  {discoverError && <div className="text-[11px] text-rose-300">{discoverError}</div>}
+                  {discoveredTiles.length > 0 && (
+                    <button
+                      onClick={handleImportFreeboxAll}
+                      className="w-full py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold"
+                    >
+                      Importer {discoveredTiles.length} équipement(s)
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {logMessage && <div className="text-[11px] font-mono text-slate-400">{logMessage}</div>}
             </div>
           )}
         </div>

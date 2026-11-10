@@ -153,30 +153,83 @@ export const ShutterEditorModal: React.FC<ShutterEditorModalProps> = ({
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Freebox Node ID :</label>
-                      <input
-                        type="number"
-                        value={chan.freeboxNodeId ?? ''}
-                        placeholder="ex: 30"
-                        onChange={(e) =>
-                          updateChannel(cIdx, 'freeboxNodeId', e.target.value ? Number(e.target.value) : undefined)
-                        }
-                        className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-white"
-                      />
+                  <div className="space-y-1.5 pt-1 border-t border-slate-800/70">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-emerald-400">Loratap Wi-Fi (Tuya Local)</span>
+                      {cIdx === 1 && currentDevice.channels[0]?.tuyaDeviceId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const ch0 = currentDevice.channels[0];
+                            const updated = [...editedShutters];
+                            const ch1 = updated[selectedDeviceIndex].channels[1];
+                            ch1.tuyaDeviceId = ch0.tuyaDeviceId;
+                            ch1.tuyaLocalKey = ch0.tuyaLocalKey;
+                            ch1.tuyaIp = ch0.tuyaIp;
+                            ch1.tuyaVersion = ch0.tuyaVersion;
+                            ch1.tuyaControlDps = ch1.tuyaControlDps ?? 101;
+                            ch1.tuyaPositionDps = ch1.tuyaPositionDps ?? 102;
+                            setEditedShutters(updated);
+                          }}
+                          className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 font-semibold"
+                        >
+                          Copier ID/Clé du Canal 1
+                        </button>
+                      )}
                     </div>
-                    <div>
-                      <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Endpoint Pos ID :</label>
-                      <input
-                        type="number"
-                        value={chan.freeboxEndpointId ?? ''}
-                        placeholder="ex: 3"
-                        onChange={(e) =>
-                          updateChannel(cIdx, 'freeboxEndpointId', e.target.value ? Number(e.target.value) : undefined)
-                        }
-                        className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-white"
-                      />
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-400 block mb-0.5">Device ID :</label>
+                        <input
+                          type="text"
+                          value={chan.tuyaDeviceId ?? ''}
+                          placeholder="bf..."
+                          onChange={(e) => updateChannel(cIdx, 'tuyaDeviceId', e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[11px] font-mono text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-400 block mb-0.5">Local Key (16 car.) :</label>
+                        <input
+                          type="text"
+                          value={chan.tuyaLocalKey ?? ''}
+                          placeholder="clé Tuya"
+                          onChange={(e) => updateChannel(cIdx, 'tuyaLocalKey', e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[11px] font-mono text-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-4 gap-1.5">
+                      <div className="col-span-2">
+                        <label className="text-[9px] font-mono text-slate-400 block mb-0.5">IP Locale :</label>
+                        <input
+                          type="text"
+                          value={chan.tuyaIp ?? ''}
+                          placeholder="192.168.0.xx"
+                          onChange={(e) => updateChannel(cIdx, 'tuyaIp', e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[11px] font-mono text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-400 block mb-0.5">DPS Cmd :</label>
+                        <input
+                          type="number"
+                          value={chan.tuyaControlDps ?? (cIdx === 0 ? 1 : 101)}
+                          onChange={(e) => updateChannel(cIdx, 'tuyaControlDps', Number(e.target.value))}
+                          className="w-full bg-slate-950 border border-slate-800 rounded px-1.5 py-1 text-[11px] font-mono text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-400 block mb-0.5">DPS Pos :</label>
+                        <input
+                          type="number"
+                          value={chan.tuyaPositionDps ?? (cIdx === 0 ? 2 : 102)}
+                          onChange={(e) => updateChannel(cIdx, 'tuyaPositionDps', Number(e.target.value))}
+                          className="w-full bg-slate-950 border border-slate-800 rounded px-1.5 py-1 text-[11px] font-mono text-white"
+                        />
+                      </div>
                     </div>
                   </div>
 

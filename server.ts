@@ -3,7 +3,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
+import dgram from 'dgram';
 import dotenv from 'dotenv';
+import TuyAPI from 'tuyapi';
 
 dotenv.config();
 
@@ -32,6 +34,12 @@ interface ShutterChannel {
   freeboxUpEndpointId?: number;
   freeboxDownEndpointId?: number;
   freeboxStopEndpointId?: number;
+  tuyaDeviceId?: string;
+  tuyaLocalKey?: string;
+  tuyaIp?: string;
+  tuyaVersion?: string;
+  tuyaControlDps?: number;
+  tuyaPositionDps?: number;
 }
 
 interface ShutterDevice {
@@ -269,6 +277,49 @@ async function sendFreeboxShutterCommand(
   }
 }
 
+async function sendTuyaShutterCommand(
+  channel: ShutterChannel,
+  action: 'up' | 'down' | 'stop' | 'set_position',
+  targetPosition?: number
+): Promise<void> {
+  if (runtimeConfig.demoMode || !channel.tuyaDeviceId || !channel.tuyaLocalKey) {
+    return;
+  }
+
+  const device = new TuyAPI({
+    id: channel.tuyaDeviceId,
+    key: channel.tuyaLocalKey,
+    ip: channel.tuyaIp || undefined,
+    version: channel.tuyaVersion || '3.3',
+    issueRefreshOnConnect: false,
+  });
+
+  const controlDps = channel.tuyaControlDps ?? 1;
+  const positionDps = channel.tuyaPositionDps ?? 2;
+
+  try {
+    await device.find({ timeout: 3 });
+    await device.connect();
+
+    if (action === 'up') {
+      await device.set({ dps: controlDps, set: 'open' });
+    } else if (action === 'down') {
+      await device.set({ dps: controlDps, set: 'close' });
+    } else if (action === 'stop') {
+      await device.set({ dps: controlDps, set: 'stop' });
+    } else if (action === 'set_position' && typeof targetPosition === 'number') {
+      await device.set({
+        dps: positionDps,
+        set: Math.max(0, Math.min(100, Math.round(targetPosition))),
+      });
+    }
+  } finally {
+    try {
+      await device.disconnect();
+    } catch {}
+  }
+}
+
 // API Routes
 app.get('/api/config', (_req: Request, res: Response) => {
   res.json(runtimeConfig);
@@ -317,8 +368,9 @@ app.post('/api/shutters/command', async (req: Request, res: Response) => {
 
   try {
     await sendFreeboxShutterCommand(targetChannel, action, targetPosition);
-  } catch (fbErr) {
-    console.error('Freebox forwarding error:', fbErr);
+    await sendTuyaShutterCommand(targetChannel, action, targetPosition);
+  } catch (err) {
+    console.error('Shutter forwarding error:', err);
   }
 
   saveConfig(runtimeConfig);
@@ -337,17 +389,21 @@ app.post('/api/shutters/group', async (req: Request, res: Response) => {
         channel.position = 100;
         channel.state = 'opening';
         promises.push(sendFreeboxShutterCommand(channel, 'up').catch(() => {}));
+        promises.push(sendTuyaShutterCommand(channel, 'up').catch(() => {}));
       } else if (action === 'all_close') {
         channel.position = 0;
         channel.state = 'closing';
         promises.push(sendFreeboxShutterCommand(channel, 'down').catch(() => {}));
+        promises.push(sendTuyaShutterCommand(channel, 'down').catch(() => {}));
       } else if (action === 'all_stop') {
         channel.state = 'stopped';
         promises.push(sendFreeboxShutterCommand(channel, 'stop').catch(() => {}));
+        promises.push(sendTuyaShutterCommand(channel, 'stop').catch(() => {}));
       } else if (action === 'all_preset' && typeof targetPosition === 'number') {
         channel.position = targetPosition;
         channel.state = 'idle';
         promises.push(sendFreeboxShutterCommand(channel, 'set_position', targetPosition).catch(() => {}));
+        promises.push(sendTuyaShutterCommand(channel, 'set_position', targetPosition).catch(() => {}));
       }
     });
   });
@@ -355,6 +411,63 @@ app.post('/api/shutters/group', async (req: Request, res: Response) => {
   await Promise.all(promises);
   saveConfig(runtimeConfig);
   res.json({ success: true, shutters: runtimeConfig.shutters });
+});
+
+// Scan local Wi-Fi network for Tuya / Loratap UDP broadcasts (ports 6666 & 6667)
+app.get('/api/tuya/scan', async (_req: Request, res: Response) => {
+  const found = new Map<string, { id: string; ip: string; version: string; productKey?: string }>();
+  const udpKey = crypto.createHash('md5').update('yGAdlopoPVldABfn').digest();
+
+  const tryParsePacket = (msg: Buffer, rinfo: dgram.RemoteInfo, encrypted: boolean) => {
+    try {
+      let jsonStr = '';
+      if (!encrypted) {
+        const start = msg.indexOf('{');
+        const end = msg.lastIndexOf('}');
+        if (start !== -1 && end !== -1) {
+          jsonStr = msg.subarray(start, end + 1).toString('utf8');
+        }
+      } else if (msg.length > 28) {
+        const payload = msg.subarray(20, msg.length - 8);
+        const decipher = crypto.createDecipheriv('aes-128-ecb', udpKey, null);
+        const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]);
+        jsonStr = decrypted.toString('utf8');
+      }
+      if (!jsonStr) return;
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.gwId) {
+        found.set(parsed.gwId, {
+          id: parsed.gwId,
+          ip: parsed.ip || rinfo.address,
+          version: parsed.version || '3.3',
+          productKey: parsed.productKey,
+        });
+      }
+    } catch {}
+  };
+
+  const s6666 = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  const s6667 = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+  s6666.on('error', () => {});
+  s6667.on('error', () => {});
+  s6666.on('message', (msg, rinfo) => tryParsePacket(msg, rinfo, false));
+  s6667.on('message', (msg, rinfo) => tryParsePacket(msg, rinfo, true));
+
+  try {
+    s6666.bind(6666);
+    s6667.bind(6667);
+  } catch {}
+
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+
+  try { s6666.close(); } catch {}
+  try { s6667.close(); } catch {}
+
+  res.json({
+    success: true,
+    devices: Array.from(found.values()),
+  });
 });
 
 // Discover paired Freebox Home devices (shutters, switches, Zigbee/IO/RTS nodes)
